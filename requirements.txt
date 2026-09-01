@@ -1,7 +1,5 @@
 # ❤️ Cardiovascular Disease Prediction
 
-An AI-powered web application that predicts the risk of cardiovascular disease using Machine Learning.
-
 ## Features
 
 - Predict cardiovascular disease risk
