@@ -1,68 +1,10 @@
-# ❤️ Cardiovascular Disease Prediction
-
-## Features
-
-- Predict cardiovascular disease risk
-- Calculates probability score
-- Modern Streamlit interface
-- Gradient Boosting Classifier
-- Exploratory Data Analysis (EDA)
-- Model training pipeline
-
-## Technologies
-
-- Python
-- Streamlit
-- Pandas
-- NumPy
-- Scikit-learn
-- Matplotlib
-- Seaborn
-- Joblib
-
-## Dataset
-
-Cardiovascular Disease Dataset
-
-Features include:
-
-- Age
-- Gender
-- Height
-- Weight
-- Blood Pressure
-- Cholesterol
-- Glucose
-- Smoking
-- Alcohol
-- Physical Activity
-
-## Model
-
-Gradient Boosting Classifier
-
-## Performance
-
-- Accuracy: ~72%
-- Precision: ~74%
-- Recall: ~68%
-- F1 Score: ~71%
-
-## Run
-
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-## Project Structure
-
-```
-datasets/
-models/
-notebooks/
-app.py
-train.py
-requirements.txt
-README.md
-```
+# Tested with Python 3.9 (versions below are the ones used in development)
+numpy==2.0.2
+pandas==2.3.3
+scikit-learn==1.6.1
+joblib==1.5.3
+openpyxl==3.1.5        # reads the .xlsx dataset
+matplotlib==3.9.4      # EDA notebook
+ipykernel>=6.0         # run notebooks in VS Code / Jupyter
+streamlit==1.50.0      # legacy baseline app (app.py)
+seaborn>=0.13          # legacy EDA.ipynb
