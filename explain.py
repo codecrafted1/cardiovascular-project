@@ -60,3 +60,63 @@ if __name__ == "__main__":
         print(f"\nTop 10 features for {target}")
         print(get_feature_importance(target).head(10).to_string(index=False))
 
+
+def explain_patient(patient: dict, target="CAD"):
+    """Explain one patient's prediction using SHAP.
+
+    Returns the calibrated model probability and approximate feature
+    contributions from one fitted Random Forest estimator.
+    """
+    import shap
+    import numpy as np
+
+    from predict import load_bundle, build_row
+
+    bundle = load_bundle()
+
+    if target not in bundle["targets"]:
+        raise ValueError(f"Unknown target: {target}")
+
+    row = build_row(patient, bundle)
+    calibrated = bundle["targets"][target]["calibrated"]
+
+    # Use the first fitted estimator's preprocessing and Random Forest.
+    pipeline = calibrated.calibrated_classifiers_[0].estimator
+    preprocessor = pipeline.named_steps["pre"]
+    classifier = pipeline.named_steps["clf"]
+
+    transformed = preprocessor.transform(row)
+    feature_names = preprocessor.get_feature_names_out()
+
+    # SHAP output for binary classification: (samples, features, classes).
+    explainer = shap.TreeExplainer(classifier)
+    values = np.asarray(explainer.shap_values(transformed))
+
+    if values.ndim == 3:
+        # Class 1 represents the positive class.
+        contributions = values[0, :, 1]
+    elif values.ndim == 2:
+        contributions = values[0]
+    else:
+        raise ValueError(f"Unexpected SHAP output shape: {values.shape}")
+
+    # Clean preprocessing prefixes for readable feature names.
+    names = [
+        name.replace("num__", "").replace("cat__", "")
+        for name in feature_names
+    ]
+
+    explanation = pd.DataFrame({
+        "feature": names,
+        "shap_value": contributions,
+    })
+    explanation["abs_shap"] = explanation["shap_value"].abs()
+    explanation = explanation.sort_values(
+        "abs_shap", ascending=False
+    ).reset_index(drop=True)
+
+    return {
+        "probability": calibrated.predict_proba(row)[0, 1],
+        "explanation": explanation,
+        "method": "First fitted Random Forest estimator",
+    }

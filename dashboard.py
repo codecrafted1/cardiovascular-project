@@ -4,7 +4,7 @@ from pathlib import Path
 
 import streamlit as st
 from predict import predict_patient
-from explain import get_feature_importance
+from explain import get_feature_importance, explain_patient
 
 BASE_DIR = Path(__file__).resolve().parent
 SCHEMA_PATH = BASE_DIR / "docs" / "input_schema.json"
@@ -202,6 +202,38 @@ if submitted:
             y_label="Importance",
             horizontal=True,
         )
+        
+        st.subheader("5. Why did the model make this prediction?")
+
+        explain_target = st.selectbox(
+            "Choose a target for patient-specific explanation",
+            ["CAD", "LAD", "LCX", "RCA"],
+            key="shap_target",
+        )
+
+        try:
+            patient_explanation = explain_patient(
+                patient,
+                target=explain_target,
+            )
+
+            st.metric(
+                "Calibrated model probability",
+                f"{patient_explanation['probability']:.1%}",
+            )
+
+            shap_data = patient_explanation["explanation"].head(10).copy()
+            shap_data = shap_data.sort_values("shap_value")
+
+            st.bar_chart(
+                shap_data.set_index("feature")["shap_value"],
+                x_label="SHAP contribution to the explained estimator output",
+                horizontal=True,
+            )
+
+        except Exception as error:
+            st.error("Could not generate the patient-specific explanation.")
+            st.exception(error)
 
     except Exception as error:
         st.error(
