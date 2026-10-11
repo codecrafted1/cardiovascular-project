@@ -90,3 +90,23 @@ app.py, train.py        Earlier baseline (general cardiovascular dataset), kept 
 - Trained model files are not stored in git (`.gitignore`). Run `python train_cad.py` after cloning.
 - The earlier baseline (`app.py`, `train.py`, `notebooks/EDA.ipynb`) uses the Kaggle cardiovascular dataset and a different task; it is separate from the Track A pipeline.
 - Dataset source: UCI Machine Learning Repository, Extension of the Z-Alizadeh Sani dataset.
+### Explainability dashboard
+
+The Streamlit dashboard provides two complementary views:
+
+- **Global feature importance:** shows which input features the Random Forest model relies on overall.
+- **Patient-specific SHAP explanations:** ranks features by their positive or negative contribution to the selected patient's explanation for CAD, LAD, LCX, or RCA.
+
+**Interpretation limitation:** The current SHAP calculation explains one fitted Random Forest estimator within the calibrated ensemble. The displayed probability comes from the calibrated model, so the SHAP contributions should not be interpreted as a direct decomposition of that probability. Contributions indicate model behavior, not causation or a medical diagnosis.
+
+### Testing
+
+After installing the project dependencies and training the models, run:
+
+```bash
+pytest -q tests/test_member2.py
+```
+
+The tests check prediction outputs, input reporting, feature importance, and SHAP explanation outputs for all four targets.
+
+CardioVision is an educational research prototype, not a clinically validated diagnostic tool.
