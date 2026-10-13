@@ -1,5 +1,5 @@
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { Canvas } from "@react-three/fiber";
 import {
   OrbitControls,
@@ -10,69 +10,130 @@ import {
 } from "@react-three/drei";
 import "./App.css";
 
+const API_URL = "http://127.0.0.1:5000";
 const vessels = {
   LAD: {
     color: "#ef4444",
-    probability: 81,
     description: "Left Anterior Descending artery",
     position: [-1.15, -0.45, 0.2],
   },
   LCX: {
     color: "#22c55e",
-    probability: 35,
     description: "Left Circumflex artery",
     position: [1.05, 0.25, 0.2],
   },
   RCA: {
     color: "#facc15",
-    probability: 64,
     description: "Right Coronary Artery",
     position: [1.05, -0.65, 0.2],
   },
 };
 
-// Temporary demonstration data.
-// Replace with real SHAP output from your teammate.
-const demoFactors = [
-  { name: "Age", contribution: 22 },
-  { name: "Cholesterol", contribution: 18 },
-  { name: "ST Elevation", contribution: 16 },
-  { name: "Blood Pressure", contribution: 12 },
-  { name: "Pulse Rate", contribution: 8 },
-];
+const RISK_COLORS = {
+  HIGH: "#ef4444",
+  MEDIUM: "#f59e0b",
+  LOW: "#22c55e",
+};
 
-function HeartModel() {
+function getRiskColor(risk, fallback) {
+  return RISK_COLORS[risk] || fallback;
+}
+
+function HeartModel({ displayVessels }) {
   const { scene } = useGLTF("/models/heart_clear.glb");
+
+  // Keep the original cached GLB scene unchanged.
+  const heartScene = useMemo(() => scene.clone(true), [scene]);
+
+  useEffect(() => {
+    heartScene.traverse((object) => {
+      if (
+        !object.isMesh ||
+        !Object.prototype.hasOwnProperty.call(vessels, object.name)
+      ) {
+        return;
+      }
+
+      const vesselData = displayVessels[object.name];
+
+      // Preserve the original material color for unavailable predictions.
+      if (!object.userData.originalVesselColor) {
+        object.userData.originalVesselColor =
+          object.material.color?.getHexString
+            ? `#${object.material.color.getHexString()}`
+            : vessels[object.name].color;
+      }
+
+      // Clone once so other meshes/materials are not unintentionally changed.
+      if (!object.userData.vesselMaterialCloned) {
+        if (Array.isArray(object.material)) {
+          object.material = object.material.map((material) =>
+            material.clone()
+          );
+        } else {
+          object.material = object.material.clone();
+        }
+
+        object.userData.vesselMaterialCloned = true;
+      }
+
+      const fallbackColor =
+        object.userData.originalVesselColor || vessels[object.name].color;
+
+      const color =
+        vesselData?.risk && vesselData.risk !== "Unavailable"
+          ? getRiskColor(vesselData.risk, fallbackColor)
+          : fallbackColor;
+
+      const materials = Array.isArray(object.material)
+        ? object.material
+        : [object.material];
+
+      materials.forEach((material) => {
+        if (material.color) {
+          material.color.set(color);
+          material.needsUpdate = true;
+        }
+      });
+    });
+  }, [
+    heartScene,
+    displayVessels.LAD?.risk,
+    displayVessels.LCX?.risk,
+    displayVessels.RCA?.risk,
+  ]);
 
   return (
     <Bounds fit clip observe margin={1.35}>
       <Center>
-        <primitive object={scene} />
+        <primitive object={heartScene} />
       </Center>
     </Bounds>
   );
 }
 
-function VesselLabel({ name, onSelect, selected }) {
-  const vessel = vessels[name];
-
+function VesselLabel({ name, data, onSelect, selected }) {
   return (
     <Html
-      position={vessel.position}
+      position={data.position}
       center
       distanceFactor={7}
       style={{ pointerEvents: "auto" }}
     >
       <button
         className={`heart-label ${selected ? "label-active" : ""}`}
-        style={{ "--vessel-color": vessel.color }}
+        style={{ "--vessel-color": data.color }}
         onClick={(event) => {
           event.stopPropagation();
           onSelect(name);
         }}
       >
         <span>{name}</span>
-        <strong>{vessel.probability}%</strong>
+        <strong>
+          {data.probability == null
+            ? "--"
+            : `${data.probability.toFixed(2)}%`}
+        </strong>
       </button>
     </Html>
   );
@@ -80,12 +141,85 @@ function VesselLabel({ name, onSelect, selected }) {
 
 function App() {
   const [selected, setSelected] = useState("LAD");
+  const [predictions, setPredictions] = useState(null);
+  const [cadPrediction, setCadPrediction] = useState(null);
+  const [apiStatus, setApiStatus] = useState("CONNECTING");
+  const [error, setError] = useState("");
+  const [retryCount, setRetryCount] = useState(0);
   const controlsRef = useRef();
 
-  const vessel = vessels[selected];
+  
+useEffect(() => {
+  let cancelled = false;
+
+  async function checkBackend() {
+    try {
+      setApiStatus("CONNECTING");
+      setError("");
+
+      const response = await fetch(`${API_URL}/api/health`);
+
+      if (!response.ok) {
+        throw new Error("Backend health check failed.");
+      }
+
+      const result = await response.json();
+
+      if (cancelled) return;
+
+      if (result.status === "ok") {
+        setApiStatus("BACKEND CONNECTED");
+      } else {
+        throw new Error("Backend response sahi nahi hai.");
+      }
+    } catch (error) {
+      if (cancelled) return;
+      setApiStatus("CONNECTION FAILED");
+      setError(error.message);
+    }
+  }
+
+  checkBackend();
+
+  return () => {
+    cancelled = true;
+  };
+}, [retryCount]);
+
+  const displayVessels = Object.fromEntries(
+    Object.entries(vessels).map(([name, vessel]) => {
+      const prediction = predictions?.[name];
+      const risk = prediction?.risk ?? "Unavailable";
+
+      return [
+        name,
+        {
+          ...vessel,
+          probability:
+            typeof prediction?.probability === "number"
+              ? prediction.probability * 100
+              : null,
+          risk,
+          color: getRiskColor(risk, vessel.color),
+        },
+      ];
+    })
+  );
+
+  const vessel = displayVessels[selected];
 
   function resetView() {
     controlsRef.current?.reset();
+  }
+
+  function formatScore(score) {
+    return typeof score === "number"
+      ? `${(score * 100).toFixed(2)}%`
+      : "--";
+  }
+
+  function retryPrediction() {
+    setRetryCount((count) => count + 1);
   }
 
   return (
@@ -99,7 +233,19 @@ function App() {
           </div>
         </div>
 
-        <span className="status">DEMO MODE</span>
+        <span
+          className="status"
+          style={{
+            color:
+              apiStatus === "LIVE MODEL CONNECTED"
+                ? "#22c55e"
+                : apiStatus === "CONNECTING"
+                ? "#facc15"
+                : "#ef4444",
+          }}
+        >
+          {apiStatus}
+        </span>
       </header>
 
       <main className="dashboard">
@@ -129,12 +275,13 @@ function App() {
                 intensity={1.2}
               />
 
-              <HeartModel />
+              <HeartModel displayVessels={displayVessels} />
 
-              {Object.keys(vessels).map((name) => (
+              {Object.entries(displayVessels).map(([name, data]) => (
                 <VesselLabel
                   key={name}
                   name={name}
+                  data={data}
                   selected={selected === name}
                   onSelect={setSelected}
                 />
@@ -159,7 +306,7 @@ function App() {
           </div>
 
           <div className="legend">
-            {Object.entries(vessels).map(([name, data]) => (
+            {Object.entries(displayVessels).map(([name, data]) => (
               <button
                 key={name}
                 className={
@@ -174,26 +321,57 @@ function App() {
                   style={{ backgroundColor: data.color }}
                 />
                 {name}
-                <strong>{data.probability}%</strong>
+                <strong>
+                  {data.probability == null
+                    ? "--"
+                    : `${data.probability.toFixed(2)}%`}
+                </strong>
               </button>
             ))}
           </div>
 
           <div className="risk-legend">
-            <strong>Probability scale</strong>
-            <span><i className="scale-dot green" /> 0–30%</span>
-            <span><i className="scale-dot yellow" /> 30–60%</span>
-            <span><i className="scale-dot red" /> 60–100%</span>
+            <strong>Model probability scale</strong>
+            <span>
+              <i className="scale-dot green" /> LOW
+            </span>
+            <span>
+              <i className="scale-dot yellow" /> MEDIUM
+            </span>
+            <span>
+              <i className="scale-dot red" /> HIGH
+            </span>
           </div>
         </section>
 
         <aside className="details-panel">
           <div className="details-heading">
-            <h2>Vessel Details</h2>
-            <p>Select a coronary artery</p>
+            <h2>Prediction Details</h2>
+            <p>Results from the trained ML model</p>
           </div>
 
-          {Object.entries(vessels).map(([name, data]) => (
+          {error && (
+            <div role="alert" className="error-message">
+              <strong>Prediction load nahi hui</strong>
+              <p>{error}</p>
+              <button onClick={retryPrediction}>Retry</button>
+            </div>
+          )}
+
+          <div className="vessel-card">
+            <div className="vessel-title">
+              <strong>CAD — Overall indicator</strong>
+              <span className="percentage">
+                {formatScore(cadPrediction?.probability)}
+              </span>
+            </div>
+            <p>Coronary artery disease model output</p>
+            <p>
+              Model risk: {cadPrediction?.risk ?? "Unavailable"}
+            </p>
+          </div>
+
+          {Object.entries(displayVessels).map(([name, data]) => (
             <button
               key={name}
               className={
@@ -210,17 +388,23 @@ function App() {
                 />
                 <strong>{name}</strong>
                 <span className="percentage">
-                  {data.probability}%
+                  {data.probability == null
+                    ? "--"
+                    : `${data.probability.toFixed(2)}%`}
                 </span>
               </div>
 
               <p>{data.description}</p>
+              <p>Model risk: {data.risk}</p>
 
               <div className="progress-track">
                 <div
                   className="progress-fill"
                   style={{
-                    width: `${data.probability}%`,
+                    width: `${Math.max(
+                      0,
+                      Math.min(100, data.probability ?? 0)
+                    )}%`,
                     backgroundColor: data.color,
                   }}
                 />
@@ -235,59 +419,50 @@ function App() {
             />
             <h3>Selected: {selected}</h3>
             <p>{vessel.description}</p>
+
             <div className="selected-probability">
-              <span>Demo stenosis probability</span>
+              <span>Model-predicted probability</span>
               <strong style={{ color: vessel.color }}>
-                {vessel.probability}%
+                {vessel.probability == null
+                  ? "--"
+                  : `${vessel.probability.toFixed(2)}%`}
               </strong>
             </div>
+
+            <p>Model risk: {vessel.risk}</p>
           </div>
 
           <section className="factors-panel">
-            <h2>Key Contributing Factors</h2>
+            <h2>Prediction Information</h2>
             <p className="factor-subtitle">
-              Example feature contributions for {selected}
+              Output returned by the trained model
             </p>
 
-            {demoFactors.map((factor) => (
-              <div className="factor-row" key={factor.name}>
-                <div className="factor-heading">
-                  <span>{factor.name}</span>
-                  <strong>{factor.contribution}%</strong>
-                </div>
-
-                <div className="progress-track factor-track">
-                  <div
-                    className="progress-fill factor-fill"
-                    style={{
-                      width: `${factor.contribution * 4}%`,
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-
-            <p className="factor-note">
-              Illustrative values only. Actual feature importance
-              must come from the trained model's SHAP explanation.
+            <p>
+              The probabilities displayed here come from the API
+              response. They are model-predicted probabilities,
+              not measured blockage percentages.
             </p>
 
-            <button
-              className="shap-button"
-              onClick={() => {
-                window.alert(
-                  "SHAP integration will be added when the explanation module is connected."
-                );
-              }}
-            >
-              View SHAP Explanation →
-            </button>
+            {predictions?.missing_inputs?.length > 0 && (
+              <p>
+                Missing input fields:{" "}
+                {predictions.missing_inputs.join(", ")}
+              </p>
+            )}
+
+            {predictions?.ignored_inputs?.length > 0 && (
+              <p>
+                Ignored input fields:{" "}
+                {predictions.ignored_inputs.join(", ")}
+              </p>
+            )}
           </section>
 
           <p className="disclaimer">
-            Educational prototype only. Example probabilities are
-            not real patient predictions and must not be used for
-            diagnosis.
+            Research/demo output only. Model probabilities are not
+            a clinical diagnosis and should not be used alone for
+            medical decisions.
           </p>
         </aside>
       </main>
@@ -299,5 +474,3 @@ useGLTF.preload("/models/heart_clear.glb");
 
 export default App;
 
-
-       
